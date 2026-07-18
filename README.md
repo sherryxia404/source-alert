@@ -4,7 +4,7 @@ Monitor public web sources for meaningful updates and send alerts to your phone.
 
 SourceAlert is a lightweight, open-source personal monitor. Add public URLs to
 `sources.yaml`; it checks them on a schedule, stores version history in SQLite,
-and notifies you through ntfy or Telegram when content is new or updated.
+and notifies you through SMS, ntfy, or Telegram when content is new or updated.
 
 The project began with a practical problem: campus community members may want
 public safety updates even when they cannot use a university's account-based
@@ -53,6 +53,29 @@ python source_alert.py
 
 The first check for each source establishes a baseline silently. Later new or
 edited content triggers a notification.
+
+## SMS with Twilio
+
+Create a Twilio account, obtain an SMS-capable Twilio phone number, and verify
+your personal recipient number if the account is still in trial mode. Add these
+private values to `.env` locally or to your cloud provider's encrypted
+environment variables:
+
+```text
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM_NUMBER=+12065550123
+SMS_TO_NUMBER=+16085550123
+```
+
+Phone numbers must use E.164 format: `+`, country code, and number. Do not put
+real credentials or phone numbers in `sources.yaml`, source code, or GitHub.
+
+Test delivery:
+
+```bash
+python source_alert.py --test-notification
+```
 
 ## Add a source
 
@@ -103,6 +126,20 @@ The SQLite database must persist between runs.
 docker build -t source-alert .
 docker run --env-file .env -v source-alert-data:/app/data source-alert
 ```
+
+## Deploy continuously on Railway
+
+1. In Railway, create a project with **Deploy from GitHub repo** and choose
+   `sherryxia404/source-alert`.
+2. Railway detects the included `Dockerfile`; no public domain is required.
+3. Add a persistent Volume mounted at `/app/data`.
+4. Add the environment variables from `.env.example` in Railway's Variables
+   panel. Set `DATABASE_PATH=/app/data/source_alert.sqlite3`.
+5. Add the four Twilio SMS variables above as private Railway variables.
+6. Deploy. The Docker process stays running and checks every five minutes.
+
+Every push to the connected GitHub branch can trigger a new deployment. The
+Volume preserves change history across deployments.
 
 ## Tests
 
