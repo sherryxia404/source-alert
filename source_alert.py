@@ -357,6 +357,35 @@ def send_telegram(change: Change, token: str, chat_id: str) -> None:
     response.raise_for_status()
 
 
+def sms_text(change: Change, limit: int = 1450) -> str:
+    verb = "UPDATED" if change.kind == "updated" else "NEW"
+    text = (
+        f"SourceAlert {verb} · {change.item.source}\n"
+        f"{change.item.title}\n{change.item.link}"
+    )
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def send_twilio_sms(
+    change: Change,
+    account_sid: str,
+    auth_token: str,
+    from_number: str,
+    to_number: str,
+) -> None:
+    response = requests.post(
+        f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+        data={
+            "From": from_number,
+            "To": to_number,
+            "Body": sms_text(change),
+        },
+        auth=(account_sid, auth_token),
+        timeout=20,
+    )
+    response.raise_for_status()
+
+
 def notifiers() -> list[tuple[str, Callable[[Change], None]]]:
     result = []
     topic = os.getenv("NTFY_TOPIC", "").strip()
@@ -367,6 +396,30 @@ def notifiers() -> list[tuple[str, Callable[[Change], None]]]:
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if token and chat_id:
         result.append(("telegram", lambda change: send_telegram(change, token, chat_id)))
+
+    twilio_sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    twilio_token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    from_number = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+    to_number = os.getenv("SMS_TO_NUMBER", "").strip()
+    twilio_values = [twilio_sid, twilio_token, from_number, to_number]
+    if any(twilio_values) and not all(twilio_values):
+        raise ValueError(
+            "Twilio SMS requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, "
+            "TWILIO_FROM_NUMBER, and SMS_TO_NUMBER"
+        )
+    if all(twilio_values):
+        result.append(
+            (
+                "twilio-sms",
+                lambda change: send_twilio_sms(
+                    change,
+                    twilio_sid,
+                    twilio_token,
+                    from_number,
+                    to_number,
+                ),
+            )
+        )
     return result
 
 
