@@ -78,6 +78,8 @@ After that, no computer needs to remain on. The workflow in
 `.github/workflows/monitor.yml` runs automatically. Its SQLite state contains
 only copies of public source content and is committed when a source changes;
 the private ntfy topic remains encrypted in GitHub Secrets.
+The workflow also writes one tiny monthly heartbeat commit so GitHub does not
+disable the schedule after a long period without repository activity.
 
 GitHub scheduled jobs can occasionally start a few minutes late during busy
 periods, so this is useful supplemental monitoring, not a guaranteed emergency
