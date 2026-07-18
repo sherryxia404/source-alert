@@ -276,11 +276,9 @@ class Store:
                 ),
             )
         else:
-            self.db.execute(
-                "UPDATE items SET last_seen_at=? WHERE source=? AND external_id=?",
-                (now, item.source, item.external_id),
-            )
-            self.db.commit()
+            # Keep the database byte-for-byte stable when nothing changed. This
+            # lets the free GitHub Actions deployment persist state only when a
+            # source actually changes, instead of creating a commit every run.
             return None
 
         self.db.execute(
