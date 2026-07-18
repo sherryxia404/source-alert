@@ -52,6 +52,18 @@ def test_new_rss_item_notifies_after_baseline(tmp_path: Path):
     store.close()
 
 
+def test_unchanged_item_does_not_write_to_database(tmp_path: Path):
+    source = Source("Example", "https://example.com/feed", "rss")
+    store = Store(tmp_path / "state.sqlite3")
+    item = parse_feed(feed("Same content"), source)[0]
+    store.observe(item)
+    changes_before = store.db.total_changes
+
+    assert store.observe(item) is None
+    assert store.db.total_changes == changes_before
+    store.close()
+
+
 def test_webpage_selector():
     source = Source("Status", "https://example.com", "webpage", "#status")
     item = parse_webpage(b"<title>Site</title><div id='status'>All good</div>", source)[0]
