@@ -54,6 +54,35 @@ python source_alert.py
 The first check for each source establishes a baseline silently. Later new or
 edited content triggers a notification.
 
+## Free cloud setup: GitHub Actions + ntfy
+
+This is the recommended setup for personal use. GitHub runs one short check
+every ten minutes, and ntfy delivers a normal push notification to your phone.
+For a public repository using standard GitHub-hosted runners, this setup does
+not need Railway, Twilio, a server, or a credit card.
+
+1. Install **ntfy** from the iOS App Store or Google Play.
+2. Make a long random topic name, for example
+   `source-alert-7f3b1c9e-your-own-random-words`. Treat it like a password.
+3. In ntfy, tap **Subscribe to topic**, use the default `ntfy.sh` server, and
+   enter that exact topic name.
+4. In this GitHub repository, open **Settings → Secrets and variables →
+   Actions → New repository secret**.
+5. Name the secret `NTFY_TOPIC`; paste only the topic name as its value.
+6. Open **Actions → Monitor sources → Run workflow**. Leave the test box off
+   for the first run. This quietly saves the current page as the baseline.
+7. Run it a second time with **Send a test notification to the phone** checked.
+   A SourceAlert test should appear on the phone.
+
+After that, no computer needs to remain on. The workflow in
+`.github/workflows/monitor.yml` runs automatically. Its SQLite state contains
+only copies of public source content and is committed when a source changes;
+the private ntfy topic remains encrypted in GitHub Secrets.
+
+GitHub scheduled jobs can occasionally start a few minutes late during busy
+periods, so this is useful supplemental monitoring, not a guaranteed emergency
+delivery system.
+
 ## SMS with Twilio
 
 Create a Twilio account, obtain an SMS-capable Twilio phone number, and verify
@@ -119,6 +148,11 @@ python source_alert.py --once
 ```
 
 The SQLite database must persist between runs.
+
+The free GitHub Actions workflow has its own schedule in
+`.github/workflows/monitor.yml`. Change `*/10 * * * *` to `*/30 * * * *` for
+every 30 minutes. Scheduled workflows use UTC, and GitHub's shortest supported
+schedule interval is five minutes.
 
 ## Docker
 
