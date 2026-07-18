@@ -1,6 +1,16 @@
 from pathlib import Path
 
-from source_alert import Item, Source, Store, check_source, load_sources, parse_feed, parse_webpage
+from source_alert import (
+    Change,
+    Item,
+    Source,
+    Store,
+    check_source,
+    load_sources,
+    parse_feed,
+    parse_webpage,
+    sms_text,
+)
 
 
 def feed(body: str, guid: str = "one") -> bytes:
@@ -47,3 +57,20 @@ def test_webpage_selector():
     item = parse_webpage(b"<title>Site</title><div id='status'>All good</div>", source)[0]
     assert item.title == "Site"
     assert item.body == "All good"
+
+
+def test_sms_contains_source_title_and_link():
+    item = Item(
+        "UW Seattle Alert",
+        "one",
+        "Test alert",
+        "Details",
+        "https://example.com/one",
+        "",
+        "hash",
+    )
+    message = sms_text(Change("updated", item))
+    assert "UPDATED" in message
+    assert "UW Seattle Alert" in message
+    assert "Test alert" in message
+    assert "https://example.com/one" in message
