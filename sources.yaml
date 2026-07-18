@@ -1,0 +1,13 @@
+sources:
+  # SourceAlert will discover this site's public RSS feed automatically.
+  - name: UW Seattle Alert
+    url: https://emergency.uw.edu/
+    type: auto
+    enabled: true
+
+  # Static webpage example. Remove "selector" to watch the main page content.
+  # - name: Example status page
+  #   url: https://example.com/status
+  #   type: webpage
+  #   selector: "#current-status"
+  #   enabled: true
