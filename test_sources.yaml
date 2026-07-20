@@ -1,0 +1,6 @@
+sources:
+  - name: SourceAlert Controlled Test
+    url: http://127.0.0.1:8765/test-page.html
+    type: webpage
+    selector: "main"
+    enabled: true
