@@ -8,7 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       send_test_notification:
-        description: Send a test notification to the phone
+        description: Send a direct test notification to the phone
+        type: boolean
+        default: false
+      simulate_source_update:
+        description: Simulate a real webpage update through the full monitor
         type: boolean
         default: false
 
@@ -25,6 +29,8 @@ jobs:
     timeout-minutes: 5
     env:
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       DATABASE_PATH: data/source_alert.sqlite3
 
     steps:
@@ -43,6 +49,23 @@ jobs:
       - name: Verify notification connection
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test_notification }}
         run: python source_alert.py --test-notification
+
+      - name: Simulate a real webpage update
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_source_update }}
+        run: |
+          mkdir -p .source-alert-test
+          printf '<html><head><title>SourceAlert Test</title></head><body><main>Test page version 1</main></body></html>\n' > .source-alert-test/test-page.html
+          python -m http.server 8765 --directory .source-alert-test > /tmp/source-alert-test-server.log 2>&1 &
+          TEST_SERVER_PID=$!
+          trap 'kill "$TEST_SERVER_PID"' EXIT
+          sleep 1
+
+          rm -f data/source_alert_test.sqlite3
+          DATABASE_PATH=data/source_alert_test.sqlite3 python source_alert.py --once --config test_sources.yaml
+
+          printf '<html><head><title>SourceAlert Test</title></head><body><main>Test page version 2 — change detected</main></body></html>\n' > .source-alert-test/test-page.html
+          DATABASE_PATH=data/source_alert_test.sqlite3 python source_alert.py --once --config test_sources.yaml
+          rm -f data/source_alert_test.sqlite3
 
       - name: Check sources once
         run: python source_alert.py --once
