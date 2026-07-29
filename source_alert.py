@@ -233,15 +233,26 @@ class Store:
         ).fetchone()
         return row is not None
 
-    def observe(self, item: Item) -> Change | None:
-        now = utc_now()
+    def detect(self, item: Item) -> Change | None:
         current = self.db.execute(
             "SELECT content_hash FROM items WHERE source = ? AND external_id = ?",
             (item.source, item.external_id),
         ).fetchone()
 
         if current is None:
-            kind = "new"
+            return Change("new", item)
+        if current["content_hash"] != item.content_hash:
+            return Change("updated", item)
+        return None
+
+    def save(self, item: Item) -> None:
+        now = utc_now()
+        current = self.db.execute(
+            "SELECT 1 FROM items WHERE source = ? AND external_id = ?",
+            (item.source, item.external_id),
+        ).fetchone()
+
+        if current is None:
             self.db.execute(
                 "INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -256,8 +267,7 @@ class Store:
                     now,
                 ),
             )
-        elif current["content_hash"] != item.content_hash:
-            kind = "updated"
+        else:
             self.db.execute(
                 """
                 UPDATE items SET title=?, body=?, link=?, published_at=?,
@@ -275,11 +285,6 @@ class Store:
                     item.external_id,
                 ),
             )
-        else:
-            # Keep the database byte-for-byte stable when nothing changed. This
-            # lets the free GitHub Actions deployment persist state only when a
-            # source actually changes, instead of creating a commit every run.
-            return None
 
         self.db.execute(
             "INSERT OR IGNORE INTO versions VALUES (?, ?, ?, ?, ?, ?)",
@@ -293,7 +298,18 @@ class Store:
             ),
         )
         self.db.commit()
-        return Change(kind, item)
+
+    def observe(self, item: Item) -> Change | None:
+        """Detect and immediately save an item.
+
+        This remains useful for callers that do not send notifications. The
+        monitor itself uses detect/save separately so a failed delivery does
+        not mark a change as handled.
+        """
+        change = self.detect(item)
+        if change:
+            self.save(item)
+        return change
 
     def record_delivery(
         self, change: Change, channel: str, success: bool, error: str | None = None
@@ -316,6 +332,23 @@ class Store:
         )
         self.db.commit()
 
+    def delivery_succeeded(self, change: Change, channel: str) -> bool:
+        row = self.db.execute(
+            """
+            SELECT 1 FROM deliveries
+            WHERE source = ? AND external_id = ? AND content_hash = ?
+                AND channel = ? AND success = 1
+            LIMIT 1
+            """,
+            (
+                change.item.source,
+                change.item.external_id,
+                change.item.content_hash,
+                channel,
+            ),
+        ).fetchone()
+        return row is not None
+
     def close(self) -> None:
         self.db.close()
 
@@ -328,13 +361,14 @@ def excerpt(item: Item, limit: int = 500) -> str:
 def send_ntfy(change: Change, server: str, topic: str) -> None:
     verb = "Updated" if change.kind == "updated" else "New"
     response = requests.post(
-        f"{server.rstrip('/')}/{topic}",
-        data=excerpt(change.item).encode(),
-        headers={
-            "Title": f"{verb} · {change.item.source}: {change.item.title}",
-            "Priority": "high",
-            "Tags": "bell",
-            "Click": change.item.link,
+        server.rstrip("/"),
+        json={
+            "topic": topic,
+            "message": excerpt(change.item),
+            "title": f"{verb} · {change.item.source}: {change.item.title}",
+            "priority": "high",
+            "tags": ["bell"],
+            "click": change.item.link,
         },
         timeout=20,
     )
@@ -429,20 +463,29 @@ def check_source(
     fetcher: Callable[[Source], list[Item]] = fetch_source,
 ) -> int:
     first_run = not store.has_source(source.name)
-    changes = []
-    for item in reversed(fetcher(source)):
-        change = store.observe(item)
-        if change:
-            changes.append(change)
+    items = list(reversed(fetcher(source)))
 
     if first_run and not notify_on_first_run:
-        LOGGER.info("%s: baseline saved (%d items)", source.name, len(changes))
+        changes = 0
+        for item in items:
+            if store.detect(item):
+                store.save(item)
+                changes += 1
+        LOGGER.info("%s: baseline saved (%d items)", source.name, changes)
         return 0
 
     sent = 0
-    for change in changes:
+    for item in items:
+        change = store.detect(item)
+        if not change:
+            continue
+
         LOGGER.info("%s: %s · %s", source.name, change.kind, change.item.title)
+        failed_channels = []
         for channel, notify in channels:
+            if store.delivery_succeeded(change, channel):
+                LOGGER.info("%s already delivered; skipping duplicate", channel)
+                continue
             try:
                 notify(change)
                 store.record_delivery(change, channel, True)
@@ -450,6 +493,17 @@ def check_source(
             except Exception as exc:
                 store.record_delivery(change, channel, False, str(exc))
                 LOGGER.exception("%s delivery failed", channel)
+                failed_channels.append(channel)
+
+        if failed_channels:
+            names = ", ".join(failed_channels)
+            raise RuntimeError(
+                f"Notification failed via {names}; change remains pending for retry"
+            )
+
+        # Only mark the source version as seen after every configured channel
+        # has delivered successfully. A failure therefore remains retryable.
+        store.save(change.item)
     return sent
 
 
@@ -493,8 +547,10 @@ def main() -> int:
     if not sources:
         raise ValueError("No enabled sources found in the configuration")
     store = Store(os.getenv("DATABASE_PATH", "data/source_alert.sqlite3"))
+    run_failed = False
     try:
         while True:
+            cycle_failed = False
             for source in sources:
                 try:
                     check_source(
@@ -505,7 +561,9 @@ def main() -> int:
                     )
                 except Exception:
                     LOGGER.exception("%s check failed", source.name)
+                    cycle_failed = True
             if args.once:
+                run_failed = cycle_failed
                 break
             LOGGER.info("Next check in %d seconds", interval)
             time.sleep(interval)
@@ -513,7 +571,7 @@ def main() -> int:
         LOGGER.info("Stopped")
     finally:
         store.close()
-    return 0
+    return int(run_failed)
 
 
 if __name__ == "__main__":
