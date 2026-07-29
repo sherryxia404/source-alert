@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from source_alert import (
     Change,
     Item,
@@ -9,6 +11,7 @@ from source_alert import (
     load_sources,
     parse_feed,
     parse_webpage,
+    send_ntfy,
     sms_text,
 )
 
@@ -62,6 +65,75 @@ def test_unchanged_item_does_not_write_to_database(tmp_path: Path):
     assert store.observe(item) is None
     assert store.db.total_changes == changes_before
     store.close()
+
+
+def test_failed_delivery_remains_pending_and_only_failed_channel_retries(tmp_path: Path):
+    source = Source("Example", "https://example.com/feed", "rss")
+    store = Store(tmp_path / "state.sqlite3")
+    check_source(
+        source,
+        store,
+        [],
+        fetcher=lambda _: parse_feed(feed("Original"), source),
+    )
+
+    successful_attempts = []
+    flaky_attempts = []
+
+    def successful(change):
+        successful_attempts.append(change)
+
+    def flaky(change):
+        flaky_attempts.append(change)
+        if len(flaky_attempts) == 1:
+            raise RuntimeError("temporary delivery failure")
+
+    changed = lambda _: parse_feed(feed("UPDATE: reopened"), source)
+    channels = [("successful", successful), ("flaky", flaky)]
+
+    with pytest.raises(RuntimeError, match="remains pending for retry"):
+        check_source(source, store, channels, fetcher=changed)
+
+    assert store.detect(changed(source)[0]).kind == "updated"
+    assert check_source(source, store, channels, fetcher=changed) == 1
+    assert len(successful_attempts) == 1
+    assert len(flaky_attempts) == 2
+    assert store.detect(changed(source)[0]) is None
+    store.close()
+
+
+def test_ntfy_json_publish_supports_unicode_title(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("source_alert.requests.post", fake_post)
+    item = Item(
+        "UW Seattle Alert",
+        "one",
+        "UW Advisory – Emergency response",
+        "Update includes 中文 and an em dash — safely.",
+        "https://example.com/one",
+        "",
+        "hash",
+    )
+
+    send_ntfy(Change("new", item), "https://ntfy.sh/", "private-topic")
+
+    assert captured["url"] == "https://ntfy.sh"
+    assert captured["json"]["topic"] == "private-topic"
+    assert captured["json"]["title"] == (
+        "New · UW Seattle Alert: UW Advisory – Emergency response"
+    )
+    assert "中文" in captured["json"]["message"]
+    assert "headers" not in captured
 
 
 def test_webpage_selector():
