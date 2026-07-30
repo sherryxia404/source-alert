@@ -133,6 +133,7 @@ def test_ntfy_json_publish_supports_unicode_title(monkeypatch):
         "New · UW Seattle Alert: UW Advisory – Emergency response"
     )
     assert "中文" in captured["json"]["message"]
+    assert captured["json"]["priority"] == 4
     assert "headers" not in captured
 
 
