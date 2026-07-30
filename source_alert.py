@@ -366,7 +366,7 @@ def send_ntfy(change: Change, server: str, topic: str) -> None:
             "topic": topic,
             "message": excerpt(change.item),
             "title": f"{verb} · {change.item.source}: {change.item.title}",
-            "priority": "high",
+            "priority": 4,
             "tags": ["bell"],
             "click": change.item.link,
         },
